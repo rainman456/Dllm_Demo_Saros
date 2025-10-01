@@ -52,11 +52,8 @@ IGNORE_FILES = {
     "pnpm-lock.yaml",
     "SETUP.md",
     "postcss.config.js",
-    "tailwind.config.js",
     "tailwind.config.ts",
-    "tsconfig.json",
     "next-env.d.ts",
-    "components.json",
     ".gitpod.yml",
     "code.md"
 

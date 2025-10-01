@@ -78,4 +78,27 @@ export class CalculationUtils {
     const dailyReturn = feesEarned / principal / daysElapsed
     return dailyReturn * 365 * 100
   }
+
+  /**
+   * Calculate optimal liquidity distribution across bins
+   */
+  static calculateLiquidityDistribution(
+    totalLiquidity: number,
+    lowerBin: number,
+    upperBin: number,
+    activeBin: number,
+  ): Map<number, number> {
+    const distribution = new Map<number, number>()
+    const binCount = upperBin - lowerBin + 1
+
+    // Simple uniform distribution for now
+    const liquidityPerBin = totalLiquidity / binCount
+
+    for (let bin = lowerBin; bin <= upperBin; bin++) {
+      distribution.set(bin, liquidityPerBin)
+    }
+
+    return distribution
+  }
+
 }

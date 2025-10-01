@@ -13,9 +13,9 @@ export interface DLMMPoolInfo {
     symbol: string
     decimals: number
   }
-  activeId: number // Current active bin ID
-  feeTier: number // Fee in basis points (1, 5, 30, 100)
-  binStep: number // Price increment between bins in basis points
+  activeId: number
+  feeTier: number
+  binStep: number
 }
 
 export interface PoolConfig {
@@ -24,13 +24,18 @@ export interface PoolConfig {
   tokenY: string
   feeTier: number
   binStep: number
+  activeId: number
+  poolAddress: string
 }
 
 export interface Position {
   positionId: string
   poolAddress: string
+  tokenX: string
+  tokenY: string
   lowerBin: number
   upperBin: number
+  currentBin: number
   liquidityX: BN
   liquidityY: BN
   feesEarned: {
@@ -39,6 +44,8 @@ export interface Position {
   }
   currentPrice: number
   isInRange: boolean
+  valueUSD: number
+  apy: number
 }
 
 export interface BinData {
@@ -54,7 +61,7 @@ export interface LiquidityParams {
   upperBin: number
   amountX: BN
   amountY: BN
-  slippage: number // Slippage tolerance (e.g., 0.01 for 1%)
+  slippage: number
 }
 
 export interface VolatilityData {
@@ -62,6 +69,16 @@ export interface VolatilityData {
   mean: number
   recentPrices: number[]
   timestamp: number
+}
+
+export interface VolatilityMetrics {
+  mean: number
+  stdDev: number
+  volatilityRatio: number
+  averageSpread: number
+  liquidityConcentration: number
+  recommendedRangeWidth: number
+  historicalPrices?: Array<{ timestamp: number; price: number }>
 }
 
 export interface RebalanceAction {
@@ -91,4 +108,13 @@ export interface SimulationResult {
   netReturn: number
   rebalanceCount: number
   gasSpent: number
+}
+
+export interface StakePosition {
+  positionId: string
+  poolAddress: string
+  stakedAmount: BN
+  rewardsPending: BN
+  stakedAt: number
+  farmAddress: string
 }
