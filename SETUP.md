@@ -11,38 +11,38 @@ Complete guide to setting up and running the Saros DLMM Rebalancer.
 
 ## Step 1: Clone Repository
 
-\`\`\`bash
+```bash
 git clone https://github.com/yourusername/saros-dlmm-rebalancer.git
 cd saros-dlmm-rebalancer
-\`\`\`
+```
 
 ## Step 2: Install Dependencies
 
-\`\`\`bash
+```bash
 npm install
-\`\`\`
+```
 
 ## Step 3: Setup Solana Wallet
 
 ### Create New Wallet
 
-\`\`\`bash
+```bash
 solana-keygen new --outfile ~/.config/solana/devnet.json
-\`\`\`
+```
 
 ### Get Devnet SOL
 
-\`\`\`bash
+```bash
 solana airdrop 2 --url devnet
-\`\`\`
+```
 
 ### Export Private Key
 
-\`\`\`bash
+```bash
 # Get private key in base58 format
 solana-keygen pubkey ~/.config/solana/devnet.json
 cat ~/.config/solana/devnet.json
-\`\`\`
+```
 
 ## Step 4: Create Telegram Bot
 
@@ -62,13 +62,13 @@ cat ~/.config/solana/devnet.json
 
 Create `.env` file:
 
-\`\`\`bash
+```bash
 cp .env.example .env
-\`\`\`
+```
 
 Edit `.env` with your values:
 
-\`\`\`env
+```env
 # Solana Configuration
 SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_NETWORK=devnet
@@ -96,7 +96,7 @@ STOP_LOSS_PERCENTAGE=0.15
 # Analytics
 NEXT_PUBLIC_API_URL=http://localhost:3000/api
 PORT=3000
-\`\`\`
+```
 
 ## Step 6: Create Test Positions
 
@@ -109,7 +109,7 @@ PORT=3000
 
 ### Option B: Using SDK (Advanced)
 
-\`\`\`typescript
+```typescript
 // Create position programmatically
 import { DLMMPool, addLiquidityIntoPosition } from '@saros-finance/dlmm-sdk';
 
@@ -120,50 +120,50 @@ await addLiquidityIntoPosition(connection, wallet, pool, {
   amountX: new BN(1000000000),
   amountY: new BN(1000000000),
 });
-\`\`\`
+```
 
 ## Step 7: Test Components
 
 ### Test Rebalancer
 
-\`\`\`bash
+```bash
 npm run rebalancer
-\`\`\`
+```
 
 Expected output:
-\`\`\`
+```
 [INFO] Starting Auto Rebalancer
 [INFO] Running rebalance check...
 [INFO] Checking 3 positions
 [SUCCESS] Rebalance check completed
-\`\`\`
+```
 
 ### Test Telegram Bot
 
-\`\`\`bash
+```bash
 npm run bot
-\`\`\`
+```
 
 In Telegram, send `/start` to your bot. You should receive a welcome message.
 
 ### Test Simulator
 
-\`\`\`bash
+```bash
 npm run simulator
-\`\`\`
+```
 
 Expected output:
-\`\`\`
+```
 [INFO] Starting Strategy Simulation
 [INFO] SIMULATION RESULTS (30-day period)
 [SUCCESS] Best Strategy: Volatility-Adjusted (Recommended)
-\`\`\`
+```
 
 ### Test Dashboard
 
-\`\`\`bash
+```bash
 npm run dev
-\`\`\`
+```
 
 Visit `http://localhost:3000` to see the analytics dashboard.
 
@@ -171,7 +171,7 @@ Visit `http://localhost:3000` to see the analytics dashboard.
 
 ### Deploy Rebalancer (Heroku)
 
-\`\`\`bash
+```bash
 # Install Heroku CLI
 npm install -g heroku
 
@@ -195,11 +195,11 @@ heroku ps:scale worker=1
 
 # View logs
 heroku logs --tail
-\`\`\`
+```
 
 ### Deploy Dashboard (Vercel)
 
-\`\`\`bash
+```bash
 # Install Vercel CLI
 npm install -g vercel
 
@@ -210,7 +210,7 @@ vercel login
 vercel --prod
 
 # Set environment variables in Vercel dashboard
-\`\`\`
+```
 
 ## Troubleshooting
 
@@ -218,10 +218,10 @@ vercel --prod
 
 **Solution**: Ensure you're using base58 format. Convert from JSON array:
 
-\`\`\`bash
+```bash
 # If you have JSON array format
 node -e "console.log(require('bs58').encode(Buffer.from(JSON.parse(require('fs').readFileSync('.config/solana/devnet.json')))))"
-\`\`\`
+```
 
 ### Issue: "No positions found"
 
@@ -241,9 +241,9 @@ node -e "console.log(require('bs58').encode(Buffer.from(JSON.parse(require('fs')
 
 **Solution**: Use a private RPC endpoint:
 
-\`\`\`env
+```env
 SOLANA_RPC_URL=https://your-private-rpc-endpoint.com
-\`\`\`
+```
 
 ## Next Steps
 
@@ -266,7 +266,7 @@ SOLANA_RPC_URL=https://your-private-rpc-endpoint.com
 - Rotate keys regularly
 - Test on devnet before mainnet
 - Monitor gas costs and adjust thresholds
-\`\`\`
+```
 
 ## Video Demo Script
 
