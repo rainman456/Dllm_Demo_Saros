@@ -1,27 +1,33 @@
 import { NextResponse } from "next/server"
+import { Connection } from "@solana/web3.js"
+import { VolatilityService } from "@/src/services"
+
+const connection = new Connection(
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com",
+  "confirmed",
+)
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const poolAddress = searchParams.get("pool")
 
-    // Mock volatility data
-    const volatilityData = {
-      poolAddress,
-      mean: 8100,
-      stdDev: 120,
-      volatilityRatio: 0.0148,
-      isHighVolatility: false,
-      recommendedRangeWidth: 0.12,
-      historicalPrices: Array.from({ length: 50 }, (_, i) => ({
-        timestamp: Date.now() - (50 - i) * 3600000,
-        price: 8100 + (Math.random() - 0.5) * 200,
-      })),
+    if (!poolAddress) {
+      return NextResponse.json({ error: "Pool address is required" }, { status: 400 })
     }
+
+    const volatilityService = new VolatilityService(connection)
+    const volatilityData = await volatilityService.calculateVolatility(poolAddress)
 
     return NextResponse.json(volatilityData)
   } catch (error) {
-    console.error("Error fetching volatility:", error)
-    return NextResponse.json({ error: "Failed to fetch volatility" }, { status: 500 })
+    console.error("[v0] Error calculating volatility:", error)
+    return NextResponse.json(
+      {
+        error: "Failed to calculate volatility",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

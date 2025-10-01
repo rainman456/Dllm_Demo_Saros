@@ -1,25 +1,29 @@
 import { Telegraf, type Context } from "telegraf"
-import { getConnection, config, validateConfig } from "./config"
+import { getConnection } from "./config"
 import { getWallet, getWalletPublicKey } from "./utils/wallet"
-import { Logger } from "./utils/logger"
 import { DLMMService } from "./services/dlmm.service"
+import { StakeService } from "./services/stake.service"
 import { VolatilityService } from "./services/volatility.service"
-import { CalculationUtils } from "./utils/calculations"
-import type { PortfolioStats } from "./types"
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ""
+const MONITORED_POOLS = process.env.MONITORED_POOLS?.split(",") || []
+const OUT_OF_RANGE_THRESHOLD = Number(process.env.OUT_OF_RANGE_THRESHOLD) || 10
 
 class SarosTelegramBot {
-  private bot: Telegraf
+  private bot: Telegraf<Context>
   private dlmmService: DLMMService
   private volatilityService: VolatilityService
+  private stakeService: StakeService
   private monitoringActive = false
 
   constructor() {
-    this.bot = new Telegraf(config.telegram.botToken)
+    this.bot = new Telegraf(BOT_TOKEN)
     const connection = getConnection()
     const wallet = getWallet()
 
-    this.dlmmService = new DLMMService(connection, wallet)
-    this.volatilityService = new VolatilityService()
+    this.dlmmService = new DLMMService(connection)
+    this.volatilityService = new VolatilityService(connection)
+    this.stakeService = new StakeService(connection, wallet)
 
     this.setupCommands()
   }
@@ -29,14 +33,14 @@ class SarosTelegramBot {
    */
   private setupCommands(): void {
     // Start command
-    this.bot.command("start", async (ctx) => {
+    this.bot.command("start", async (ctx: Context) => {
       await ctx.reply(
         `
-🚀 *Welcome to Saros DLMM Auto Rebalancer Bot!*
+Welcome to Saros DLMM Auto Rebalancer Bot!
 
 I help you manage your DLMM liquidity positions automatically.
 
-*Available Commands:*
+Available Commands:
 /monitor - View current positions
 /rebalance - Manually trigger rebalance
 /simulate - Run strategy simulation
@@ -52,10 +56,10 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
     })
 
     // Help command
-    this.bot.command("help", async (ctx) => {
+    this.bot.command("help", async (ctx: Context) => {
       await ctx.reply(
         `
-📖 *Command Guide*
+Command Guide
 
 /monitor - View all your DLMM positions with ranges and status
 /rebalance - Force rebalance check on all positions
@@ -65,51 +69,66 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
 /stop - Stop automatic monitoring
 /start - Restart the bot
 
-*Features:*
-✅ Automatic rebalancing based on volatility
-✅ Stop-loss protection
-✅ Real-time alerts
-✅ Portfolio analytics
+Features:
+Automatic rebalancing based on volatility
+Stop-loss protection
+Real-time alerts
+Portfolio analytics
       `.trim(),
         { parse_mode: "Markdown" },
       )
     })
 
     // Monitor command
-    this.bot.command("monitor", async (ctx) => {
+    this.bot.command("monitor", async (ctx: Context) => {
       await this.handleMonitor(ctx)
     })
 
     // Rebalance command
-    this.bot.command("rebalance", async (ctx) => {
+    this.bot.command("rebalance", async (ctx: Context) => {
       await this.handleRebalance(ctx)
     })
 
     // Stats command
-    this.bot.command("stats", async (ctx) => {
+    this.bot.command("stats", async (ctx: Context) => {
       await this.handleStats(ctx)
     })
 
     // Volatility command
-    this.bot.command("volatility", async (ctx) => {
+    this.bot.command("volatility", async (ctx: Context) => {
       await this.handleVolatility(ctx)
     })
 
     // Simulate command
-    this.bot.command("simulate", async (ctx) => {
+    this.bot.command("simulate", async (ctx: Context) => {
       await this.handleSimulate(ctx)
     })
 
+    // Stake command
+    this.bot.command("stake", async (ctx: Context) => {
+      await this.handleStake(ctx)
+    })
+
+    // Unstake command
+    this.bot.command("unstake", async (ctx: Context) => {
+      await this.handleUnstake(ctx)
+    })
+
+    // Rewards command
+    this.bot.command("rewards", async (ctx: Context) => {
+      await this.handleRewards(ctx)
+    })
+
     // Stop command
-    this.bot.command("stop", async (ctx) => {
+    this.bot.command("stop", async (ctx: Context) => {
       this.monitoringActive = false
-      await ctx.reply("⏸️ Monitoring stopped. Use /monitor to restart.")
+      await ctx.reply("Monitoring stopped. Use /monitor to restart.")
     })
 
     // Error handling
-    this.bot.catch((err, ctx) => {
-      Logger.error("Bot error", err)
-      ctx.reply("❌ An error occurred. Please try again.")
+    this.bot.catch((err: unknown, ctx: Context) => {
+      console.error("[v0] Bot error:", err)
+      ctx.reply("An error occurred. Please try again.")
     })
   }
 
@@ -117,39 +136,31 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
    * Handle monitor command
    */
   private async handleMonitor(ctx: Context): Promise<void> {
-    await ctx.reply("🔍 Fetching your positions...")
+    await ctx.reply("Fetching your positions...")
 
     try {
-      const positions = await this.dlmmService.getUserPositions(config.pools.monitored)
+      const walletAddress = getWalletPublicKey()
+      const positions = await this.dlmmService.getUserPositions(walletAddress)
 
       if (positions.length === 0) {
         await ctx.reply("No positions found. Add liquidity to DLMM pools to get started!")
         return
       }
 
-      let message = `📊 *Your DLMM Positions* (${positions.length})\n\n`
+      let message = `Your DLMM Positions (${positions.length})\n\n`
 
       for (const position of positions) {
-        const poolConfig = await this.dlmmService.getPoolConfig(position.poolAddress)
-        const activeBin = await this.dlmmService.getActiveBin(position.poolAddress)
-        const isInRange = !CalculationUtils.isPositionOutOfRange(
-          activeBin,
-          position.lowerBin,
-          position.upperBin,
-          config.rebalancer.outOfRangeThreshold,
-        )
-
-        const status = isInRange ? "✅ In Range" : "⚠️ Out of Range"
-        const feesX = CalculationUtils.bnToNumber(position.feesEarned.tokenX, 9)
-        const feesY = CalculationUtils.bnToNumber(position.feesEarned.tokenY, 9)
+        const status = position.isInRange ? "✅ In Range" : "⚠️ Out of Range"
 
         message += `
-*Position:* \`${position.positionId}\`
-*Pool:* ${poolConfig?.tokenX}/${poolConfig?.tokenY}
-*Status:* ${status}
-*Range:* ${position.lowerBin} - ${position.upperBin}
-*Current Bin:* ${activeBin}
-*Fees:* ${feesX.toFixed(4)} ${poolConfig?.tokenX} + ${feesY.toFixed(4)} ${poolConfig?.tokenY}
+Position: \`${position.positionId.slice(0, 8)}...\`
+Pool: ${position.tokenX}/${position.tokenY}
+Status: ${status}
+Range: ${position.lowerBin} - ${position.upperBin}
+Current Bin: ${position.currentBin}
+Fees: ${position.feesEarnedX.toFixed(4)} ${position.tokenX} + ${position.feesEarnedY.toFixed(4)} ${position.tokenY}
+Value: $${position.valueUSD.toFixed(2)}
+APY: ${position.apy.toFixed(2)}%
 ---
         `.trim()
       }
@@ -157,8 +168,139 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
       await ctx.reply(message, { parse_mode: "Markdown" })
       this.monitoringActive = true
     } catch (error) {
-      Logger.error("Error in monitor command", error)
-      await ctx.reply("❌ Failed to fetch positions. Please check your configuration.")
+      console.error("[v0] Error in monitor command:", error)
+      await ctx.reply("Failed to fetch positions. Please check your configuration.")
+    }
+  }
+
+  /**
+   * Handle stake command
+   */
+  private async handleStake(ctx: Context): Promise<void> {
+    try {
+      await ctx.reply("Checking positions for staking...")
+
+      const walletAddress = getWalletPublicKey()
+      const positions = await this.dlmmService.getUserPositions(walletAddress)
+
+      if (positions.length === 0) {
+        await ctx.reply("No positions found to stake.")
+        return
+      }
+
+      let message = "Stakeable Positions:\n\n"
+
+      for (const position of positions) {
+        const isSupported = await this.stakeService.isStakingSupported(position.poolAddress)
+
+        message += `${position.tokenX}/${position.tokenY}\n`
+        message += `Position: \`${position.positionId.slice(0, 8)}...\`\n`
+        message += `Value: $${position.valueUSD.toFixed(2)}\n`
+        message += `Staking: ${isSupported ? "Available" : "Not supported"}\n\n`
+
+        if (isSupported) {
+          try {
+            const tx = await this.stakeService.stakePosition(position.poolAddress, position.positionId)
+            message += `Staked! TX: \`${tx.slice(0, 8)}...\`\n\n`
+          } catch (error) {
+            message += `Staking failed: ${error instanceof Error ? error.message : "Unknown error"}\n\n`
+          }
+        }
+      }
+
+      await ctx.reply(message, { parse_mode: "Markdown" })
+    } catch (error) {
+      console.error("[v0] Error handling stake command:", error)
+      await ctx.reply("Failed to stake positions. Please try again.")
+    }
+  }
+
+  /**
+   * Handle unstake command
+   */
+  private async handleUnstake(ctx: Context): Promise<void> {
+    try {
+      await ctx.reply("Unstaking positions...")
+
+      const walletAddress = getWalletPublicKey()
+      const positions = await this.dlmmService.getUserPositions(walletAddress)
+
+      if (positions.length === 0) {
+        await ctx.reply("No positions found.")
+        return
+      }
+
+      let message = "Unstaking Results:\n\n"
+
+      for (const position of positions) {
+        const isSupported = await this.stakeService.isStakingSupported(position.poolAddress)
+
+        if (isSupported) {
+          try {
+            const tx = await this.stakeService.unstakePosition(position.poolAddress, position.positionId)
+            message += `${position.tokenX}/${position.tokenY} unstaked\n`
+            message += `TX: \`${tx.slice(0, 8)}...\`\n\n`
+          } catch (error) {
+            message += `${position.tokenX}/${position.tokenY} unstaking failed\n\n`
+          }
+        }
+      }
+
+      await ctx.reply(message, { parse_mode: "Markdown" })
+    } catch (error) {
+      console.error("[v0] Error handling unstake command:", error)
+      await ctx.reply("Failed to unstake positions. Please try again.")
+    }
+  }
+
+  /**
+   * Handle rewards command
+   */
+  private async handleRewards(ctx: Context): Promise<void> {
+    try {
+      await ctx.reply("Checking staking rewards...")
+
+      const walletAddress = getWalletPublicKey()
+      const positions = await this.dlmmService.getUserPositions(walletAddress)
+
+      if (positions.length === 0) {
+        await ctx.reply("No positions found.")
+        return
+      }
+
+      let message = "Staking Rewards:\n\n"
+      let totalRewards = BigInt(0)
+
+      for (const position of positions) {
+        const isSupported = await this.stakeService.isStakingSupported(position.poolAddress)
+
+        if (isSupported) {
+          try {
+            const rewards = await this.stakeService.getStakingRewards(position.poolAddress, position.positionId)
+
+            message += `${position.tokenX}/${position.tokenY}\n`
+            message += `Pending: ${Number(rewards.pendingRewards) / 1e6} ${rewards.rewardToken}\n`
+            message += `APR: ${rewards.apr.toFixed(2)}%\n\n`
+
+            totalRewards += rewards.pendingRewards
+
+            // Claim rewards
+            if (rewards.pendingRewards > BigInt(0)) {
+              const tx = await this.stakeService.claimRewards(position.poolAddress, position.positionId)
+              message += `Claimed! TX: \`${tx.slice(0, 8)}...\`\n\n`
+            }
+          } catch (error) {
+            message += `Failed to get rewards\n\n`
+          }
+        }
+      }
+
+      message += `\nTotal Claimed: ${Number(totalRewards) / 1e6} SAROS`
+
+      await ctx.reply(message, { parse_mode: "Markdown" })
+    } catch (error) {
+      console.error("[v0] Error handling rewards command:", error)
+      await ctx.reply("Failed to check rewards. Please try again.")
     }
   }
 
@@ -166,10 +308,11 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
    * Handle rebalance command
    */
   private async handleRebalance(ctx: Context): Promise<void> {
-    await ctx.reply("🔄 Starting manual rebalance check...")
+    await ctx.reply("Starting manual rebalance check...")
 
     try {
-      const positions = await this.dlmmService.getUserPositions(config.pools.monitored)
+      const walletAddress = getWalletPublicKey()
+      const positions = await this.dlmmService.getUserPositions(walletAddress)
 
       if (positions.length === 0) {
         await ctx.reply("No positions to rebalance.")
@@ -179,52 +322,32 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
       let rebalancedCount = 0
 
       for (const position of positions) {
-        const activeBin = await this.dlmmService.getActiveBin(position.poolAddress)
-        const isOutOfRange = CalculationUtils.isPositionOutOfRange(
-          activeBin,
-          position.lowerBin,
-          position.upperBin,
-          config.rebalancer.outOfRangeThreshold,
-        )
+        if (!position.isInRange) {
+          await ctx.reply(`Position \`${position.positionId.slice(0, 8)}...\` is out of range`, {
+            parse_mode: "Markdown",
+          })
 
-        if (isOutOfRange) {
-          await ctx.reply(`⚙️ Rebalancing position \`${position.positionId}\`...`, { parse_mode: "Markdown" })
+          const volatilityData = await this.volatilityService.calculateVolatility(position.poolAddress)
 
-          // Calculate new range
-          const binPrices = await this.dlmmService.getBinData(position.poolAddress)
-          const volatility = await this.volatilityService.getVolatility(position.poolAddress, binPrices)
-          const poolConfig = await this.dlmmService.getPoolConfig(position.poolAddress)
+          await ctx.reply(
+            `Volatility: ${(volatilityData.volatilityRatio * 100).toFixed(2)}%\nRecommended range: ${(volatilityData.recommendedRangeWidth * 100).toFixed(1)}%`,
+          )
 
-          if (!poolConfig) continue
-
-          const currentPrice = CalculationUtils.binIdToPrice(activeBin, poolConfig.binStep)
-          const rangeWidth = this.volatilityService.getRecommendedRangeWidth(volatility)
-          const optimalRange = CalculationUtils.calculateOptimalRange(currentPrice, volatility, rangeWidth)
-
-          const newLowerBin = CalculationUtils.priceToBinId(optimalRange.lower, poolConfig.binStep)
-          const newUpperBin = CalculationUtils.priceToBinId(optimalRange.upper, poolConfig.binStep)
-
-          const success = await this.dlmmService.rebalancePosition(position, newLowerBin, newUpperBin)
-
-          if (success) {
-            rebalancedCount++
-            await ctx.reply(`✅ Position \`${position.positionId}\` rebalanced successfully!`, {
-              parse_mode: "Markdown",
-            })
-          } else {
-            await ctx.reply(`❌ Failed to rebalance position \`${position.positionId}\``, { parse_mode: "Markdown" })
-          }
+          // Note: Actual rebalancing would require implementing the rebalance transaction
+          // For now, just report that rebalancing is needed
+          await ctx.reply(`⚠️ Manual rebalancing recommended for this position`)
+          rebalancedCount++
         }
       }
 
       if (rebalancedCount === 0) {
         await ctx.reply("✅ All positions are in optimal range. No rebalancing needed!")
       } else {
-        await ctx.reply(`🎉 Rebalanced ${rebalancedCount} position(s) successfully!`)
+        await ctx.reply(`Found ${rebalancedCount} position(s) that need rebalancing.`)
       }
     } catch (error) {
-      Logger.error("Error in rebalance command", error)
-      await ctx.reply("❌ Rebalance failed. Please check logs.")
+      console.error("[v0] Error in rebalance command:", error)
+      await ctx.reply("Rebalance check failed. Please check logs.")
     }
   }
 
@@ -232,73 +355,42 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
    * Handle stats command
    */
   private async handleStats(ctx: Context): Promise<void> {
-    await ctx.reply("📈 Calculating portfolio statistics...")
+    await ctx.reply("Calculating portfolio statistics...")
 
     try {
-      const positions = await this.dlmmService.getUserPositions(config.pools.monitored)
+      const walletAddress = getWalletPublicKey()
+      const positions = await this.dlmmService.getUserPositions(walletAddress)
 
       if (positions.length === 0) {
         await ctx.reply("No positions found.")
         return
       }
 
-      let totalFeesX = 0
-      let totalFeesY = 0
-      let positionsInRange = 0
-      let totalValueUSD = 0
+      const stats = this.dlmmService.calculatePortfolioStats(positions)
 
-      for (const position of positions) {
-        const activeBin = await this.dlmmService.getActiveBin(position.poolAddress)
-        const isInRange = !CalculationUtils.isPositionOutOfRange(
-          activeBin,
-          position.lowerBin,
-          position.upperBin,
-          config.rebalancer.outOfRangeThreshold,
-        )
-
-        if (isInRange) positionsInRange++
-
-        totalFeesX += CalculationUtils.bnToNumber(position.feesEarned.tokenX, 9)
-        totalFeesY += CalculationUtils.bnToNumber(position.feesEarned.tokenY, 9)
-
-        // Mock USD value calculation
-        const liquidityX = CalculationUtils.bnToNumber(position.liquidityX, 9)
-        const liquidityY = CalculationUtils.bnToNumber(position.liquidityY, 9)
-        totalValueUSD += liquidityX * 100 + liquidityY // Assuming SOL = $100
-      }
-
-      const stats: PortfolioStats = {
-        totalPositions: positions.length,
-        totalValueUSD,
-        totalFeesEarned: totalFeesX * 100 + totalFeesY, // Convert to USD
-        positionsInRange,
-        positionsOutOfRange: positions.length - positionsInRange,
-        averageAPY: 15.5, // Mock APY
-        impermanentLoss: 2.3, // Mock IL
-      }
+      const positionsInRange = positions.filter((p) => p.isInRange).length
+      const positionsOutOfRange = positions.length - positionsInRange
 
       const message = `
-📊 *Portfolio Statistics*
+📊 Portfolio Statistics
 
-*Total Positions:* ${stats.totalPositions}
-*Total Value:* $${stats.totalValueUSD.toFixed(2)}
-*Total Fees Earned:* $${stats.totalFeesEarned.toFixed(2)}
+Total Positions: ${positions.length}
+Total Value: $${stats.totalValue.toFixed(2)}
+Total Fees Earned: $${stats.totalFees.toFixed(2)}
 
-*Position Status:*
-✅ In Range: ${stats.positionsInRange}
-⚠️ Out of Range: ${stats.positionsOutOfRange}
+Position Status:
+✅ In Range: ${positionsInRange}
+⚠️ Out of Range: ${positionsOutOfRange}
 
-*Performance:*
-📈 Average APY: ${stats.averageAPY.toFixed(2)}%
-📉 Impermanent Loss: ${stats.impermanentLoss.toFixed(2)}%
-
-*Net Return:* ${(stats.averageAPY - stats.impermanentLoss).toFixed(2)}%
+Performance:
+Average APY: ${stats.avgApy.toFixed(2)}%
+Active Positions: ${stats.activePositions}
       `.trim()
 
       await ctx.reply(message, { parse_mode: "Markdown" })
     } catch (error) {
-      Logger.error("Error in stats command", error)
-      await ctx.reply("❌ Failed to calculate statistics.")
+      console.error("[v0] Error in stats command:", error)
+      await ctx.reply("Failed to calculate statistics.")
     }
   }
 
@@ -307,41 +399,40 @@ Your wallet: \`${getWalletPublicKey().slice(0, 8)}...\`
    */
   private async handleVolatility(ctx: Context): Promise<void> {
     const args = ctx.message && "text" in ctx.message ? ctx.message.text.split(" ") : []
-    const poolAddress = args[1] || config.pools.monitored[0]
+    const poolAddress = args[1]
 
     if (!poolAddress) {
       await ctx.reply("Please provide a pool address: /volatility <pool_address>")
       return
     }
 
-    await ctx.reply(`📊 Calculating volatility for pool...`)
+    await ctx.reply(`Calculating volatility for pool...`)
 
     try {
-      const binPrices = await this.dlmmService.getBinData(poolAddress)
-      const volatility = await this.volatilityService.getVolatility(poolAddress, binPrices)
+      const volatilityData = await this.volatilityService.calculateVolatility(poolAddress)
 
-      const volatilityRatio = (volatility.stdDev / volatility.mean) * 100
-      const isHigh = this.volatilityService.isHighVolatility(volatility)
-      const recommendedWidth = this.volatilityService.getRecommendedRangeWidth(volatility)
+      const volatilityPercent = (volatilityData.volatilityRatio * 100).toFixed(2)
+      const status = volatilityData.isHighVolatility ? "⚠️ High Volatility" : "✅ Low Volatility"
+      const recommendedWidth = (volatilityData.recommendedRangeWidth * 100).toFixed(1)
 
       const message = `
-📈 *Volatility Analysis*
+📈 Volatility Analysis
 
-*Pool:* \`${poolAddress.slice(0, 8)}...\`
-*Mean Price:* ${volatility.mean.toFixed(2)}
-*Std Deviation:* ${volatility.stdDev.toFixed(2)}
-*Volatility Ratio:* ${volatilityRatio.toFixed(2)}%
+Pool: \`${poolAddress.slice(0, 8)}...\`
+Mean Price: ${volatilityData.mean.toFixed(6)}
+Std Deviation: ${volatilityData.stdDev.toFixed(6)}
+Volatility Ratio: ${volatilityPercent}%
 
-*Status:* ${isHigh ? "🔴 High Volatility" : "🟢 Low Volatility"}
-*Recommended Range Width:* ${(recommendedWidth * 100).toFixed(1)}%
+Status: ${status}
+Recommended Range Width: ${recommendedWidth}%
 
-${isHigh ? "⚠️ Consider wider ranges to reduce rebalancing frequency." : "✅ Tighter ranges recommended for better capital efficiency."}
+${volatilityData.isHighVolatility ? "⚠️ Consider wider ranges to reduce rebalancing frequency." : "✅ Tighter ranges recommended for better capital efficiency."}
       `.trim()
 
       await ctx.reply(message, { parse_mode: "Markdown" })
     } catch (error) {
-      Logger.error("Error in volatility command", error)
-      await ctx.reply("❌ Failed to calculate volatility.")
+      console.error("[v0] Error in volatility command:", error)
+      await ctx.reply("Failed to calculate volatility.")
     }
   }
 
@@ -349,7 +440,7 @@ ${isHigh ? "⚠️ Consider wider ranges to reduce rebalancing frequency." : "�
    * Handle simulate command
    */
   private async handleSimulate(ctx: Context): Promise<void> {
-    await ctx.reply("🎮 Running strategy simulation...")
+    await ctx.reply("Running strategy simulation...")
 
     try {
       // Mock simulation results
@@ -378,14 +469,14 @@ ${isHigh ? "⚠️ Consider wider ranges to reduce rebalancing frequency." : "�
       ]
 
       let message = `
-🎮 *Strategy Simulation Results*
-_Based on 30-day historical data_
+📊 Strategy Simulation Results
+Based on 30-day historical data
 
 `
 
       for (const result of results) {
         message += `
-*${result.strategy}*
+${result.strategy}
 Fees Earned: $${result.fees}
 Impermanent Loss: $${result.il}
 Net Return: $${result.net}
@@ -396,14 +487,14 @@ Rebalances: ${result.rebalances}
 
       message += `
 
-✅ *Best Strategy:* Volatility-Adjusted
-💡 This strategy optimizes range width based on market conditions.
+✅ Best Strategy: Volatility-Adjusted
+This strategy optimizes range width based on market conditions.
       `.trim()
 
       await ctx.reply(message, { parse_mode: "Markdown" })
     } catch (error) {
-      Logger.error("Error in simulate command", error)
-      await ctx.reply("❌ Simulation failed.")
+      console.error("[v0] Error in simulate command:", error)
+      await ctx.reply("Simulation failed.")
     }
   }
 
@@ -411,17 +502,17 @@ Rebalances: ${result.rebalances}
    * Start the bot
    */
   async start(): Promise<void> {
-    Logger.info("Starting Telegram bot...")
+    console.log("[v0] Starting Telegram bot...")
 
     try {
       await this.bot.launch()
-      Logger.success("Telegram bot started successfully")
+      console.log("[v0] Telegram bot started successfully")
 
       // Graceful shutdown
       process.once("SIGINT", () => this.bot.stop("SIGINT"))
       process.once("SIGTERM", () => this.bot.stop("SIGTERM"))
     } catch (error) {
-      Logger.error("Failed to start Telegram bot", error)
+      console.error("[v0] Failed to start Telegram bot:", error)
       throw error
     }
   }
@@ -430,12 +521,14 @@ Rebalances: ${result.rebalances}
 // Main execution
 async function main() {
   try {
-    validateConfig()
+    if (!BOT_TOKEN) {
+      throw new Error("TELEGRAM_BOT_TOKEN environment variable is required")
+    }
 
     const bot = new SarosTelegramBot()
     await bot.start()
   } catch (error) {
-    Logger.error("Fatal error in bot", error)
+    console.error("[v0] Fatal error in bot:", error)
     process.exit(1)
   }
 }

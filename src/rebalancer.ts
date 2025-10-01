@@ -2,9 +2,8 @@ import type { Connection, Keypair } from "@solana/web3.js"
 import { DLMMService } from "./services/dlmm.service"
 import { VolatilityService } from "./services/volatility.service"
 import { TelegramService } from "./services/telegram.service"
-import { Logger } from "./utils/logger"
 import { config, getConnection, validateConfig } from "./config"
-import { getWallet } from "./utils/wallet"
+import { getWallet, getWalletPublicKey } from "./utils/wallet"
 import type { Position, RebalanceAction } from "./types"
 
 /**
@@ -14,6 +13,7 @@ import type { Position, RebalanceAction } from "./types"
 export class AutomatedRebalancer {
   private connection: Connection
   private wallet: Keypair
+  private walletAddress: string
   private dlmmService: DLMMService
   private volatilityService: VolatilityService
   private telegramService: TelegramService
@@ -23,8 +23,9 @@ export class AutomatedRebalancer {
   constructor() {
     this.connection = getConnection()
     this.wallet = getWallet()
-    this.dlmmService = new DLMMService(this.connection, this.wallet)
-    this.volatilityService = new VolatilityService()
+    this.walletAddress = getWalletPublicKey()
+    this.dlmmService = new DLMMService(this.connection)
+    this.volatilityService = new VolatilityService(this.connection)
     this.telegramService = new TelegramService()
   }
 
@@ -33,27 +34,30 @@ export class AutomatedRebalancer {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      Logger.warn("Rebalancer is already running")
+      console.warn("[v0] Rebalancer is already running")
       return
     }
 
-    Logger.info("Starting automated rebalancer...")
+    console.log("[v0] Starting automated rebalancer...")
     this.isRunning = true
 
     // Send startup notification
-    await this.telegramService.sendMessage("Automated rebalancer started. Monitoring positions...")
+    await this.telegramService.sendMessage("🤖 Automated rebalancer started. Monitoring positions...")
 
     // Run initial check
     await this.checkAndRebalance()
 
-    // Schedule periodic checks
-    this.checkInterval = setInterval(() => {
-      this.checkAndRebalance().catch((error) => {
-        Logger.error("Error in rebalance check", error)
-      })
-    }, config.rebalancer.checkInterval * 1000)
+    // Schedule periodic checks (convert minutes to milliseconds)
+    this.checkInterval = setInterval(
+      () => {
+        this.checkAndRebalance().catch((error) => {
+          console.error("[v0] Error in rebalance check:", error)
+        })
+      },
+      config.rebalancer.intervalMinutes * 60 * 1000,
+    )
 
-    Logger.success("Automated rebalancer started successfully")
+    console.log("[v0] Automated rebalancer started successfully")
   }
 
   /**
@@ -61,11 +65,11 @@ export class AutomatedRebalancer {
    */
   stop(): void {
     if (!this.isRunning) {
-      Logger.warn("Rebalancer is not running")
+      console.warn("[v0] Rebalancer is not running")
       return
     }
 
-    Logger.info("Stopping automated rebalancer...")
+    console.log("[v0] Stopping automated rebalancer...")
     this.isRunning = false
 
     if (this.checkInterval) {
@@ -73,7 +77,7 @@ export class AutomatedRebalancer {
       this.checkInterval = null
     }
 
-    Logger.success("Automated rebalancer stopped")
+    console.log("[v0] Automated rebalancer stopped")
   }
 
   /**
@@ -81,24 +85,24 @@ export class AutomatedRebalancer {
    */
   private async checkAndRebalance(): Promise<void> {
     try {
-      Logger.info("Checking positions for rebalancing...")
+      console.log("[v0] Checking positions for rebalancing...")
 
       // Get all user positions
-      const positions = await this.dlmmService.getUserPositions(config.pools.monitored)
+      const positions = await this.dlmmService.getUserPositions(this.walletAddress)
 
       if (positions.length === 0) {
-        Logger.info("No positions to monitor")
+        console.log("[v0] No positions to monitor")
         return
       }
 
-      Logger.info(`Found ${positions.length} positions to monitor`)
+      console.log(`[v0] Found ${positions.length} positions to monitor`)
 
       // Check each position
       for (const position of positions) {
         await this.checkPosition(position)
       }
     } catch (error) {
-      Logger.error("Failed to check and rebalance positions", error)
+      console.error("[v0] Failed to check and rebalance positions:", error)
     }
   }
 
@@ -109,7 +113,7 @@ export class AutomatedRebalancer {
     try {
       const poolConfig = await this.dlmmService.getPoolConfig(position.poolAddress)
       if (!poolConfig) {
-        Logger.error(`Failed to get pool config for ${position.poolAddress}`)
+        console.error(`[v0] Failed to get pool config for ${position.poolAddress}`)
         return
       }
 
@@ -125,11 +129,15 @@ export class AutomatedRebalancer {
         distanceFromLower < rangeSize * outOfRangeThreshold || distanceFromUpper < rangeSize * outOfRangeThreshold
 
       if (isOutOfRange) {
-        Logger.warn(`Position ${position.positionId} is out of range`)
-        await this.telegramService.sendOutOfRangeAlert(position)
+        console.warn(`[v0] Position ${position.positionId} is out of range`)
+        await this.telegramService.sendMessage(
+          `⚠️ Position out of range!\nPool: ${position.tokenX}/${position.tokenY}\nCurrent bin: ${activeBin}\nRange: [${position.lowerBin}, ${position.upperBin}]`,
+        )
 
         // Calculate new optimal range
-        const binPrices = await this.dlmmService.getBinData(position.poolAddress)
+        const binRange = 50
+        const binIds = Array.from({ length: binRange * 2 + 1 }, (_, i) => activeBin - binRange + i)
+        const binPrices = await this.dlmmService.getBinData(position.poolAddress, binIds)
         const volatility = await this.volatilityService.getVolatility(position.poolAddress, binPrices)
         const rangeWidth = this.volatilityService.getRecommendedRangeWidth(volatility)
 
@@ -141,7 +149,11 @@ export class AutomatedRebalancer {
         )
 
         // Rebalance position
-        const success = await this.dlmmService.rebalancePosition(position, optimalRange.lowerBin, optimalRange.upperBin)
+        const success = await this.dlmmService.rebalancePosition(
+          position.positionId,
+          optimalRange.lowerBin,
+          optimalRange.upperBin,
+        )
 
         if (success) {
           const action: RebalanceAction = {
@@ -160,10 +172,12 @@ export class AutomatedRebalancer {
             timestamp: Date.now(),
           }
 
-          await this.telegramService.sendRebalanceNotification(action)
+          await this.telegramService.sendMessage(
+            `✅ Position rebalanced!\nPool: ${position.tokenX}/${position.tokenY}\nOld range: [${action.oldRange.lower}, ${action.oldRange.upper}]\nNew range: [${action.newRange?.lower}, ${action.newRange?.upper}]`,
+          )
         }
       } else {
-        Logger.info(`Position ${position.positionId} is in range`)
+        console.log(`[v0] Position ${position.positionId} is in range`)
       }
 
       // Check stop-loss
@@ -173,18 +187,20 @@ export class AutomatedRebalancer {
 
         const priceDropPercentage = ((lowerPrice - currentPrice) / lowerPrice) * 100
 
-        if (priceDropPercentage > config.rebalancer.stopLossThreshold) {
-          Logger.warn(`Stop-loss triggered for position ${position.positionId}`)
-          await this.telegramService.sendStopLossAlert(position, currentPrice)
+        if (priceDropPercentage > config.rebalancer.stopLossThreshold * 100) {
+          console.warn(`[v0] Stop-loss triggered for position ${position.positionId}`)
+          await this.telegramService.sendMessage(
+            `🛑 Stop-loss triggered!\nPool: ${position.tokenX}/${position.tokenY}\nPrice drop: ${priceDropPercentage.toFixed(2)}%`,
+          )
 
-          const closed = await this.dlmmService.closePosition(position)
+          const closed = await this.dlmmService.closePosition(position.positionId)
           if (closed) {
-            Logger.success(`Position ${position.positionId} closed due to stop-loss`)
+            console.log(`[v0] Position ${position.positionId} closed due to stop-loss`)
           }
         }
       }
     } catch (error) {
-      Logger.error(`Failed to check position ${position.positionId}`, error)
+      console.error(`[v0] Failed to check position ${position.positionId}:`, error)
     }
   }
 }
@@ -199,18 +215,18 @@ async function main() {
 
     // Graceful shutdown
     process.on("SIGINT", () => {
-      Logger.info("Received SIGINT, shutting down...")
+      console.log("[v0] Received SIGINT, shutting down...")
       rebalancer.stop()
       process.exit(0)
     })
 
     process.on("SIGTERM", () => {
-      Logger.info("Received SIGTERM, shutting down...")
+      console.log("[v0] Received SIGTERM, shutting down...")
       rebalancer.stop()
       process.exit(0)
     })
   } catch (error) {
-    Logger.error("Fatal error in rebalancer", error)
+    console.error("[v0] Fatal error in rebalancer:", error)
     process.exit(1)
   }
 }
@@ -219,4 +235,3 @@ async function main() {
 if (require.main === module) {
   main()
 }
-

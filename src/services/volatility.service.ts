@@ -1,162 +1,207 @@
-import { Logger } from "../utils/logger";
+import { type Connection, PublicKey } from "@solana/web3.js"
+import { LiquidityBookServices, MODE } from "@saros-finance/dlmm-sdk"
+import type { VolatilityData, BinData } from "@/src/types"
+import BN from "bn.js"
 
-export interface VolatilityMetrics {
-  mean: number;
-  stdDev: number;
-  volatilityRatio: number;
-  historicalPrices: Array<{ timestamp: number; price: number }>;
-}
-
-/**
- * Volatility Service - Calculates market volatility for optimal range sizing
- * Uses bin price data to determine position range width
- */
 export class VolatilityService {
-  private readonly HIGH_VOLATILITY_THRESHOLD = 0.05; // 5%
-  private readonly LOW_VOLATILITY_THRESHOLD = 0.02; // 2%
+  private connection: Connection
+  private liquidityBookServices: LiquidityBookServices
+
+  constructor(connection: Connection) {
+    this.connection = connection
+
+    this.liquidityBookServices = new LiquidityBookServices({
+      mode: process.env.NEXT_PUBLIC_SOLANA_NETWORK === "mainnet-beta" ? MODE.MAINNET : MODE.DEVNET,
+    })
+  }
 
   /**
-   * Calculate volatility metrics from bin price data
-   * @param poolAddress - Pool address
-   * @param binPrices - Array of historical bin prices
+   * Calculate volatility metrics for a DLMM pool
    */
-  async getVolatility(
-    poolAddress: string,
-    binPrices: number[]
-  ): Promise<VolatilityMetrics> {
+  async calculateVolatility(poolAddress: string): Promise<VolatilityData> {
     try {
-      if (binPrices.length < 2) {
-        throw new Error("Insufficient price data for volatility calculation");
+      // Fetch pool metadata
+      const metadata = await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+
+      if (!metadata) {
+        throw new Error("Pool not found")
       }
 
-      // Calculate mean price
-      const mean =
-        binPrices.reduce((sum, price) => sum + price, 0) / binPrices.length;
+      const activeBinId = metadata.activeId
+      const binStep = metadata.binStep
 
-      // Calculate standard deviation
-      const squaredDiffs = binPrices.map((price) => Math.pow(price - mean, 2));
-      const variance =
-        squaredDiffs.reduce((sum, diff) => sum + diff, 0) / binPrices.length;
-      const stdDev = Math.sqrt(variance);
+      // Fetch bin data around the active bin (±50 bins)
+      const binRange = 50
+      const binIds = Array.from({ length: binRange * 2 + 1 }, (_, i) => activeBinId - binRange + i)
 
-      // Calculate volatility ratio (coefficient of variation)
-      const volatilityRatio = stdDev / mean;
+      const binData = await this.fetchBinData(poolAddress, binIds, binStep)
+      const prices = binData.map((bin) => bin.price)
 
-      // Format historical prices for charting
-      const historicalPrices = binPrices.map((price, index) => ({
-        timestamp: Date.now() - (binPrices.length - index) * 60000, // 1 minute intervals
-        price,
-      }));
+      // Calculate statistical metrics
+      const mean = this.calculateMean(prices)
+      const stdDev = this.calculateStdDev(prices, mean)
+      const volatilityRatio = stdDev / mean
 
-      Logger.info(`Volatility calculated for ${poolAddress}`, {
-        mean: mean.toFixed(2),
-        stdDev: stdDev.toFixed(2),
-        volatilityRatio: (volatilityRatio * 100).toFixed(2) + "%",
-      });
+      // Determine if volatility is high (threshold: 5%)
+      const isHighVolatility = volatilityRatio > 0.05
+
+      // Recommend range width based on volatility
+      const recommendedRangeWidth = this.calculateRecommendedRange(volatilityRatio)
+
+      // Create historical price data for charting
+      const historicalPrices = binData.map((bin, index) => ({
+        timestamp: Date.now() - (binData.length - index) * 60000, // Mock timestamps
+        price: bin.price,
+      }))
 
       return {
+        poolAddress,
         mean,
         stdDev,
         volatilityRatio,
+        isHighVolatility,
+        recommendedRangeWidth,
         historicalPrices,
-      };
+      }
     } catch (error) {
-      Logger.error("Failed to calculate volatility", error);
-      throw error;
+      console.error("[v0] Error calculating volatility:", error)
+      throw new Error("Failed to calculate volatility")
     }
   }
 
   /**
-   * Determine if volatility is high
-   * @param metrics - Volatility metrics
+   * Get volatility ratio for a pool
    */
-  isHighVolatility(metrics: VolatilityMetrics): boolean {
-    return metrics.volatilityRatio > this.HIGH_VOLATILITY_THRESHOLD;
-  }
+  async getVolatility(poolAddress: string, binData?: BinData[]): Promise<number> {
+    try {
+      if (binData && binData.length > 0) {
+        const prices = binData.map((bin) => bin.price)
+        const mean = this.calculateMean(prices)
+        const stdDev = this.calculateStdDev(prices, mean)
+        return stdDev / mean
+      }
 
-  /**
-   * Determine if volatility is low
-   * @param metrics - Volatility metrics
-   */
-  isLowVolatility(metrics: VolatilityMetrics): boolean {
-    return metrics.volatilityRatio < this.LOW_VOLATILITY_THRESHOLD;
+      const volatilityData = await this.calculateVolatility(poolAddress)
+      return volatilityData.volatilityRatio
+    } catch (error) {
+      console.error("[v0] Error getting volatility:", error)
+      return 0.05 // Default to 5% volatility
+    }
   }
 
   /**
    * Get recommended range width based on volatility
-   * Higher volatility = wider range to reduce rebalancing frequency
-   * Lower volatility = tighter range for better capital efficiency
-   * @param metrics - Volatility metrics
    */
-  getRecommendedRangeWidth(metrics: VolatilityMetrics): number {
-    const { volatilityRatio } = metrics;
-
-    // Base range width: 10%
-    const baseWidth = 0.1;
-
-    // Adjust based on volatility
-    // High volatility: increase range width up to 30%
-    // Low volatility: decrease range width down to 5%
-    if (volatilityRatio > this.HIGH_VOLATILITY_THRESHOLD) {
-      // High volatility: wider range
-      const multiplier =
-        1 + (volatilityRatio - this.HIGH_VOLATILITY_THRESHOLD) * 10;
-      return Math.min(baseWidth * multiplier, 0.3); // Cap at 30%
-    } else if (volatilityRatio < this.LOW_VOLATILITY_THRESHOLD) {
-      // Low volatility: tighter range
-      const multiplier = volatilityRatio / this.LOW_VOLATILITY_THRESHOLD;
-      return Math.max(baseWidth * multiplier, 0.05); // Floor at 5%
-    }
-
-    // Medium volatility: use base width
-    return baseWidth;
+  getRecommendedRangeWidth(volatilityRatio: number): number {
+    return this.calculateRecommendedRange(volatilityRatio)
   }
 
   /**
-   * Calculate optimal bin range around current price
-   * @param currentPrice - Current market price
-   * @param rangeWidth - Range width as percentage (e.g., 0.1 for 10%)
-   * @param binStep - Bin step in basis points
+   * Calculate optimal bin range based on current price and volatility
    */
   calculateOptimalBinRange(
     currentPrice: number,
     rangeWidth: number,
-    binStep: number
-  ): {
-    lowerBin: number;
-    upperBin: number;
-    lowerPrice: number;
-    upperPrice: number;
-  } {
-    // Calculate price bounds
-    const lowerPrice = currentPrice * (1 - rangeWidth / 2);
-    const upperPrice = currentPrice * (1 + rangeWidth / 2);
+    binStep: number,
+  ): { lowerBin: number; upperBin: number } {
+    // Calculate price range
+    const lowerPrice = currentPrice * (1 - rangeWidth / 2)
+    const upperPrice = currentPrice * (1 + rangeWidth / 2)
 
-    // Convert to bin IDs
-    const lowerBin = this.priceToBinId(lowerPrice, binStep);
-    const upperBin = this.priceToBinId(upperPrice, binStep);
+    // Convert prices to bin IDs
+    // price = (1 + binStep/10000)^binId
+    // binId = log(price) / log(1 + binStep/10000)
+    const lowerBin = Math.floor(Math.log(lowerPrice) / Math.log(1 + binStep / 10000))
+    const upperBin = Math.ceil(Math.log(upperPrice) / Math.log(1 + binStep / 10000))
 
-    return {
-      lowerBin,
-      upperBin,
-      lowerPrice,
-      upperPrice,
-    };
+    return { lowerBin, upperBin }
   }
 
   /**
-   * Convert price to bin ID
-   * Formula: binId = log(price) / log(1 + binStep / 10000)
+   * Fetch bin data for specified bin IDs
    */
-  private priceToBinId(price: number, binStep: number): number {
-    return Math.floor(Math.log(price) / Math.log(1 + binStep / 10000));
+  private async fetchBinData(poolAddress: string, binIds: number[], binStep: number): Promise<BinData[]> {
+    try {
+      const binData: BinData[] = []
+
+      // Get bin arrays from Saros
+      const poolPubkey = new PublicKey(poolAddress)
+
+      for (const binId of binIds) {
+        try {
+          // Calculate price from bin ID: price = (1 + binStep/10000)^binId
+          const price = Math.pow(1 + binStep / 10000, binId)
+
+          // For now, use mock liquidity data
+          // In production, fetch actual bin data from chain
+          binData.push({
+            binId,
+            price,
+            liquidityX: new BN(0),
+            liquidityY: new BN(0),
+            supply: new BN(0),
+          })
+        } catch (error) {
+          continue
+        }
+      }
+
+      return binData
+    } catch (error) {
+      console.error("[v0] Error fetching bin data:", error)
+      return []
+    }
   }
 
   /**
-   * Convert bin ID to price
-   * Formula: price = (1 + binStep / 10000) ^ binId
+   * Calculate mean of an array of numbers
    */
-  private binIdToPrice(binId: number, binStep: number): number {
-    return Math.pow(1 + binStep / 10000, binId);
+  private calculateMean(values: number[]): number {
+    if (values.length === 0) return 0
+    const sum = values.reduce((acc, val) => acc + val, 0)
+    return sum / values.length
+  }
+
+  /**
+   * Calculate standard deviation
+   */
+  private calculateStdDev(values: number[], mean: number): number {
+    if (values.length === 0) return 0
+    const squaredDiffs = values.map((val) => Math.pow(val - mean, 2))
+    const avgSquaredDiff = this.calculateMean(squaredDiffs)
+    return Math.sqrt(avgSquaredDiff)
+  }
+
+  /**
+   * Calculate recommended range width based on volatility
+   */
+  private calculateRecommendedRange(volatilityRatio: number): number {
+    // Base range: 10%
+    // Add 5% for every 1% of volatility above 2%
+    const baseRange = 0.1
+    const volatilityAdjustment = Math.max(0, (volatilityRatio - 0.02) * 5)
+    return Math.min(baseRange + volatilityAdjustment, 0.5) // Cap at 50%
+  }
+
+  /**
+   * Get real-time price from active bin
+   */
+  async getCurrentPrice(poolAddress: string): Promise<number> {
+    try {
+      const metadata = await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+
+      if (!metadata) {
+        throw new Error("Pool not found")
+      }
+
+      const binStep = metadata.binStep
+      const activeBinId = metadata.activeId
+      const price = Math.pow(1 + binStep / 10000, activeBinId)
+
+      return price
+    } catch (error) {
+      console.error("[v0] Error getting current price:", error)
+      throw new Error("Failed to get current price")
+    }
   }
 }

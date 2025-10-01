@@ -1,63 +1,37 @@
 import { NextResponse } from "next/server"
+import { Connection } from "@solana/web3.js"
+import { DLMMService } from "@/src/services"
 
-// Mock data for demo - in production, this would fetch from blockchain
-export async function GET() {
+// Initialize Solana connection to devnet
+const connection = new Connection(
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com",
+  "confirmed",
+)
+
+export async function GET(request: Request) {
   try {
-    // Mock positions data
-    const positions = [
-      {
-        positionId: "pos_abc123",
-        poolAddress: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
-        tokenX: "SOL",
-        tokenY: "USDC",
-        lowerBin: 8000,
-        upperBin: 8200,
-        currentBin: 8150,
-        liquidityX: 1.5,
-        liquidityY: 150.0,
-        feesEarnedX: 0.025,
-        feesEarnedY: 2.5,
-        isInRange: true,
-        valueUSD: 300.0,
-        apy: 18.5,
-      },
-      {
-        positionId: "pos_def456",
-        poolAddress: "8xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsV",
-        tokenX: "SOL",
-        tokenY: "USDT",
-        lowerBin: 7900,
-        upperBin: 8100,
-        currentBin: 8180,
-        liquidityX: 2.0,
-        liquidityY: 200.0,
-        feesEarnedX: 0.018,
-        feesEarnedY: 1.8,
-        isInRange: false,
-        valueUSD: 400.0,
-        apy: 15.2,
-      },
-      {
-        positionId: "pos_ghi789",
-        poolAddress: "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsW",
-        tokenX: "USDC",
-        tokenY: "USDT",
-        lowerBin: 9950,
-        upperBin: 10050,
-        currentBin: 10000,
-        liquidityX: 500.0,
-        liquidityY: 500.0,
-        feesEarnedX: 5.2,
-        feesEarnedY: 5.2,
-        isInRange: true,
-        valueUSD: 1000.0,
-        apy: 12.8,
-      },
-    ]
+    const { searchParams } = new URL(request.url)
+    const walletAddress = searchParams.get("wallet")
 
-    return NextResponse.json({ positions })
+    if (!walletAddress) {
+      return NextResponse.json({ error: "Wallet address is required" }, { status: 400 })
+    }
+
+    const dlmmService = new DLMMService(connection)
+    const positions = await dlmmService.getUserPositions(walletAddress)
+
+    // Calculate portfolio stats
+    const stats = dlmmService.calculatePortfolioStats(positions)
+
+    return NextResponse.json({ positions, stats })
   } catch (error) {
-    console.error("Error fetching positions:", error)
-    return NextResponse.json({ error: "Failed to fetch positions" }, { status: 500 })
+    console.error("[v0] Error fetching positions:", error)
+    return NextResponse.json(
+      {
+        error: "Failed to fetch positions",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

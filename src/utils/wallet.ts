@@ -1,25 +1,34 @@
 import { Keypair } from "@solana/web3.js"
 import bs58 from "bs58"
-import { config } from "../config"
 
-export const getWallet = (): Keypair => {
-  try {
-    const privateKeyString = config.wallet.privateKey
+let walletInstance: Keypair | null = null
 
-    // Try base58 decoding first
-    try {
-      const privateKeyBytes = bs58.decode(privateKeyString)
-      return Keypair.fromSecretKey(privateKeyBytes)
-    } catch {
-      // Try JSON array format
-      const privateKeyArray = JSON.parse(privateKeyString)
-      return Keypair.fromSecretKey(Uint8Array.from(privateKeyArray))
+/**
+ * Get or create wallet from private key
+ */
+export function getWallet(): Keypair {
+  if (!walletInstance) {
+    const privateKey = process.env.WALLET_PRIVATE_KEY
+
+    if (!privateKey) {
+      throw new Error("WALLET_PRIVATE_KEY environment variable is required")
     }
-  } catch (error) {
-    throw new Error("Invalid wallet private key format. Use base58 or JSON array format.")
+
+    try {
+      // Decode base58 private key
+      const secretKey = bs58.decode(privateKey)
+      walletInstance = Keypair.fromSecretKey(secretKey)
+    } catch (error) {
+      throw new Error("Invalid WALLET_PRIVATE_KEY format. Must be base58 encoded.")
+    }
   }
+
+  return walletInstance
 }
 
-export const getWalletPublicKey = (): string => {
+/**
+ * Get wallet public key as string
+ */
+export function getWalletPublicKey(): string {
   return getWallet().publicKey.toBase58()
 }

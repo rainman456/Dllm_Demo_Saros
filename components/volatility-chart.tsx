@@ -1,132 +1,70 @@
-"use client";
+"use client"
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Line,
-  LineChart,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip as ChartTooltip,
-  Legend as ChartLegend,
-  Filler,
-} from "chart.js";
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  ChartTooltip,
-  ChartLegend,
-  Filler
-);
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
 interface VolatilityChartProps {
-  data: Array<{
-    timestamp: number;
-    price: number;
-  }>;
-  poolName: string;
+  data: {
+    poolAddress: string
+    mean: number
+    stdDev: number
+    volatilityRatio: number
+    isHighVolatility: boolean
+    recommendedRangeWidth: number
+    historicalPrices: Array<{
+      timestamp: number
+      price: number
+    }>
+  }
 }
 
-export function VolatilityChart({ data, poolName }: VolatilityChartProps) {
-  // Format data for recharts
-  const chartData = data.map((point) => ({
-    time: new Date(point.timestamp).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
+export function VolatilityChart({ data }: VolatilityChartProps) {
+  const chartData = data.historicalPrices.map((point) => ({
+    time: new Date(point.timestamp).toLocaleTimeString(),
     price: point.price,
-  }));
-
-  // Calculate min and max for Y-axis domain
-  const prices = data.map((d) => d.price);
-  const minPrice = Math.min(...prices);
-  const maxPrice = Math.max(...prices);
-  const padding = (maxPrice - minPrice) * 0.1;
+  }))
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base sm:text-lg">
-          Price History - {poolName}
-        </CardTitle>
-        <CardDescription className="text-xs sm:text-sm">
-          Historical price data from bin activity
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <CardTitle>Volatility Analysis</CardTitle>
+          <Badge variant={data.isHighVolatility ? "destructive" : "default"}>
+            {data.isHighVolatility ? "High Volatility" : "Normal Volatility"}
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="h-[250px] sm:h-[300px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={chartData}
-              margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10 }}
-                className="text-muted-foreground"
-                tickLine={false}
-                axisLine={false}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                domain={[minPrice - padding, maxPrice + padding]}
-                tick={{ fontSize: 10 }}
-                className="text-muted-foreground"
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(value) => `$${value.toFixed(2)}`}
-                width={45}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                }}
-                labelStyle={{ color: "hsl(var(--foreground))" }}
-                itemStyle={{ color: "hsl(var(--primary))" }}
-                formatter={(value: number) => [`$${value.toFixed(2)}`, "Price"]}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: "11px" }}
-                iconType="line"
-                formatter={() => "Price"}
-              />
-              <Line
-                type="monotone"
-                dataKey="price"
-                stroke="hsl(var(--primary))"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div>
+            <p className="text-sm text-muted-foreground">Mean Price</p>
+            <p className="text-lg font-semibold">{data.mean.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Std Dev</p>
+            <p className="text-lg font-semibold">{data.stdDev.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Volatility Ratio</p>
+            <p className="text-lg font-semibold">{(data.volatilityRatio * 100).toFixed(2)}%</p>
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Recommended Range</p>
+            <p className="text-lg font-semibold">{(data.recommendedRangeWidth * 100).toFixed(0)}%</p>
+          </div>
         </div>
+
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="time" />
+            <YAxis />
+            <Tooltip />
+            <Line type="monotone" dataKey="price" stroke="hsl(var(--primary))" strokeWidth={2} />
+          </LineChart>
+        </ResponsiveContainer>
       </CardContent>
     </Card>
-  );
+  )
 }

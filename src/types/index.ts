@@ -1,44 +1,44 @@
 import type { PublicKey } from "@solana/web3.js"
 import type BN from "bn.js"
 
-export interface DLMMPoolInfo {
-  address: PublicKey
-  tokenX: {
-    mint: PublicKey
-    symbol: string
-    decimals: number
-  }
-  tokenY: {
-    mint: PublicKey
-    symbol: string
-    decimals: number
-  }
-  activeId: number // Current active bin ID
-  feeTier: number // Fee in basis points (1, 5, 30, 100)
-  binStep: number // Price increment between bins in basis points
-}
-
-export interface PoolConfig {
-  address: PublicKey
-  tokenX: string
-  tokenY: string
-  feeTier: number
-  binStep: number
-}
-
 export interface Position {
   positionId: string
   poolAddress: string
+  tokenX: string
+  tokenY: string
+  tokenXMint: string
+  tokenYMint: string
   lowerBin: number
   upperBin: number
-  liquidityX: BN
-  liquidityY: BN
-  feesEarned: {
-    tokenX: BN
-    tokenY: BN
-  }
-  currentPrice: number
+  currentBin: number
+  liquidityX: number
+  liquidityY: number
+  feesEarnedX: number
+  feesEarnedY: number
   isInRange: boolean
+  valueUSD: number
+  apy: number
+  lastUpdated: number
+}
+
+export interface PortfolioStats {
+  totalValue: number
+  totalFees: number
+  avgApy: number
+  activePositions: number
+}
+
+export interface VolatilityData {
+  poolAddress: string
+  mean: number
+  stdDev: number
+  volatilityRatio: number
+  isHighVolatility: boolean
+  recommendedRangeWidth: number
+  historicalPrices: Array<{
+    timestamp: number
+    price: number
+  }>
 }
 
 export interface BinData {
@@ -49,46 +49,43 @@ export interface BinData {
   supply: BN
 }
 
-export interface LiquidityParams {
-  lowerBin: number
-  upperBin: number
-  amountX: BN
-  amountY: BN
-  slippage: number // Slippage tolerance (e.g., 0.01 for 1%)
-}
-
-export interface VolatilityData {
-  stdDev: number
-  mean: number
-  recentPrices: number[]
-  timestamp: number
+export interface PoolState {
+  address: PublicKey
+  tokenXMint: PublicKey
+  tokenYMint: PublicKey
+  binStep: number
+  activeId: number
+  protocolFee: number
+  maxBinId: number
+  minBinId: number
 }
 
 export interface RebalanceAction {
   positionId: string
   poolAddress: string
-  action: "rebalance" | "stop-loss" | "none"
+  action: "rebalance" | "close" | "adjust"
   reason: string
-  oldRange: { lower: number; upper: number }
-  newRange?: { lower: number; upper: number }
+  oldRange: {
+    lower: number
+    upper: number
+  }
+  newRange?: {
+    lower: number
+    upper: number
+  }
   timestamp: number
+  txSignature?: string
 }
 
 export interface PortfolioStats {
-  totalPositions: number
-  totalValueUSD: number
-  totalFeesEarned: number
-  positionsInRange: number
-  positionsOutOfRange: number
-  averageAPY: number
-  impermanentLoss: number
-}
-
-export interface SimulationResult {
-  strategy: string
+  totalValue: number
   totalFees: number
-  impermanentLoss: number
-  netReturn: number
-  rebalanceCount: number
-  gasSpent: number
+  avgApy: number
+  activePositions: number
+  totalPositions?: number; // Added for bot summary
+  totalFeesEarned?: number; // Alias for totalFees
+  positionsInRange?: number; // Calculated active
+  positionsOutOfRange?: number; // Calculated
+  averageAPY?: number; // Alias for avgApy
+  impermanentLoss?: number; // Add if needed for calculations
 }

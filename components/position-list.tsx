@@ -1,175 +1,113 @@
-"use client";
+"use client"
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { CheckCircle2, AlertCircle, ExternalLink } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { ArrowUpDown, ExternalLink, RefreshCw } from "lucide-react"
+import { useState } from "react"
 
 interface Position {
-  positionId: string;
-  poolAddress: string;
-  tokenX: string;
-  tokenY: string;
-  lowerBin: number;
-  upperBin: number;
-  currentBin: number;
-  liquidityX: number;
-  liquidityY: number;
-  feesEarnedX: number;
-  feesEarnedY: number;
-  isInRange: boolean;
-  valueUSD: number;
-  apy: number;
+  positionId: string
+  poolAddress: string
+  tokenX: string
+  tokenY: string
+  lowerBin: number
+  upperBin: number
+  currentBin: number
+  liquidityX: number
+  liquidityY: number
+  feesEarnedX: number
+  feesEarnedY: number
+  isInRange: boolean
+  valueUSD: number
+  apy: number
 }
 
 interface PositionListProps {
-  positions: Position[];
+  positions: Position[]
+  onSelectPosition: (poolAddress: string) => void
+  isLoading?: boolean
 }
 
-export function PositionList({ positions }: PositionListProps) {
+export function PositionList({ positions, onSelectPosition, isLoading }: PositionListProps) {
+  const [sortBy, setSortBy] = useState<"value" | "apy">("value")
+
+  const sortedPositions = [...positions].sort((a, b) => {
+    if (sortBy === "value") return b.valueUSD - a.valueUSD
+    return b.apy - a.apy
+  })
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-12">
+          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    )
+  }
+
   if (positions.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base sm:text-lg">
-            Active Positions
-          </CardTitle>
-          <CardDescription className="text-xs sm:text-sm">
-            Your DLMM liquidity positions across all pools
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-12">
-            <p className="text-sm sm:text-base text-muted-foreground">
-              No active positions found
-            </p>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-2">
-              Add liquidity to DLMM pools to get started
-            </p>
-          </div>
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <p className="text-muted-foreground text-center">
+            No active positions found. Add liquidity to a DLMM pool to get started.
+          </p>
+          <Button className="mt-4" asChild>
+            <a href="/pools">Browse Pools</a>
+          </Button>
         </CardContent>
       </Card>
-    );
+    )
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base sm:text-lg">Active Positions</CardTitle>
-        <CardDescription className="text-xs sm:text-sm">
-          Your DLMM liquidity positions across all pools
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <CardTitle>Your Positions</CardTitle>
+          <Button variant="outline" size="sm" onClick={() => setSortBy(sortBy === "value" ? "apy" : "value")}>
+            <ArrowUpDown className="h-4 w-4 mr-2" />
+            Sort by {sortBy === "value" ? "APY" : "Value"}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {positions.map((position) => (
+          {sortedPositions.map((position) => (
             <div
               key={position.positionId}
-              className="flex flex-col sm:flex-row items-start justify-between rounded-lg border p-3 sm:p-4 hover:bg-accent/50 transition-colors gap-4"
+              className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
+              onClick={() => onSelectPosition(position.poolAddress)}
             >
-              <div className="space-y-3 flex-1 w-full">
-                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                  <h3 className="font-semibold text-base sm:text-lg">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="font-semibold">
                     {position.tokenX}/{position.tokenY}
                   </h3>
-                  {position.isInRange ? (
-                    <Badge
-                      variant="default"
-                      className="bg-green-600 hover:bg-green-600 text-xs"
-                    >
-                      <CheckCircle2 className="mr-1 h-3 w-3" />
-                      In Range
-                    </Badge>
-                  ) : (
-                    <Badge variant="destructive" className="text-xs">
-                      <AlertCircle className="mr-1 h-3 w-3" />
-                      Out of Range
-                    </Badge>
-                  )}
+                  <Badge variant={position.isInRange ? "default" : "destructive"}>
+                    {position.isInRange ? "In Range" : "Out of Range"}
+                  </Badge>
                 </div>
-
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-xs sm:text-sm">
+                <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+                  <div>Value: ${position.valueUSD.toFixed(2)}</div>
+                  <div>APY: {position.apy.toFixed(2)}%</div>
                   <div>
-                    <p className="text-muted-foreground mb-1">Position Value</p>
-                    <p className="font-semibold">
-                      ${position.valueUSD.toFixed(2)}
-                    </p>
+                    Fees: {position.feesEarnedX.toFixed(4)} {position.tokenX}
                   </div>
                   <div>
-                    <p className="text-muted-foreground mb-1">APY</p>
-                    <p className="font-semibold text-green-600 dark:text-green-500">
-                      {position.apy.toFixed(2)}%
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground mb-1">Range</p>
-                    <p className="font-semibold">
-                      {position.lowerBin} - {position.upperBin}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground mb-1">Current Bin</p>
-                    <p className="font-semibold">{position.currentBin}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm pt-2 border-t">
-                  <div>
-                    <p className="text-muted-foreground mb-1">Liquidity</p>
-                    <p className="font-mono text-xs">
-                      {(position.liquidityX / 1e9).toFixed(4)} {position.tokenX}
-                    </p>
-                    <p className="font-mono text-xs">
-                      {(position.liquidityY / 1e9).toFixed(2)} {position.tokenY}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground mb-1">Fees Earned</p>
-                    <p className="font-mono text-xs text-green-600 dark:text-green-500">
-                      {(position.feesEarnedX / 1e9).toFixed(6)}{" "}
-                      {position.tokenX}
-                    </p>
-                    <p className="font-mono text-xs text-green-600 dark:text-green-500">
-                      {(position.feesEarnedY / 1e9).toFixed(4)}{" "}
-                      {position.tokenY}
-                    </p>
+                    Range: {position.lowerBin} - {position.upperBin}
                   </div>
                 </div>
               </div>
-
-              <div className="flex sm:flex-col gap-2 w-full sm:w-auto sm:ml-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 sm:flex-none bg-transparent"
-                >
-                  Manage
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="flex-1 sm:flex-none"
-                  asChild
-                >
-                  <a
-                    href={`https://explorer.solana.com/address/${position.poolAddress}?cluster=devnet`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                </Button>
-              </div>
+              <Button variant="ghost" size="sm" className="mt-2 sm:mt-0">
+                <ExternalLink className="h-4 w-4" />
+              </Button>
             </div>
           ))}
         </div>
       </CardContent>
     </Card>
-  );
+  )
 }
