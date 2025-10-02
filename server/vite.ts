@@ -1,85 +1,67 @@
-import express, { type Express } from "express";
-import fs from "fs";
-import path from "path";
-import { createServer as createViteServer, createLogger } from "vite";
-import { type Server } from "http";
-import viteConfig from "../vite.config";
-import { nanoid } from "nanoid";
+import { createServer as createViteServer, type ViteDevServer } from "vite"
+import express from "express"
+import path from "path"
+import { fileURLToPath } from "url"
+import { dirname } from "path"
+import fs from "fs"
 
-const viteLogger = createLogger();
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+let vite: ViteDevServer | undefined
 
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
+export async function setupVite(app: express.Application) {
+  const isDev = process.env.NODE_ENV !== "production"
 
-export async function setupVite(app: Express, server: Server) {
-  const serverOptions = {
-    middlewareMode: true,
-    hmr: { server },
-    allowedHosts: true as const,
-  };
+  if (isDev) {
+    // Development mode: use Vite dev server
+    vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+      root: path.resolve(__dirname, "../client"),
+    })
 
-  const vite = await createViteServer({
-    ...viteConfig,
-    configFile: false,
-    customLogger: {
-      ...viteLogger,
-      error: (msg, options) => {
-        viteLogger.error(msg, options);
-        process.exit(1);
-      },
-    },
-    server: serverOptions,
-    appType: "custom",
-  });
+    app.use(vite.middlewares)
+  } else {
+    // Production mode: serve built files
+    const distPath = path.resolve(__dirname, "../client/dist")
+    app.use(express.static(distPath))
 
-  app.use(vite.middlewares);
-  app.use("*", async (req, res, next) => {
-    const url = req.originalUrl;
-
-    try {
-      const clientTemplate = path.resolve(
-        import.meta.dirname,
-        "..",
-        "client",
-        "index.html",
-      );
-
-      // always reload the index.html file from disk incase it changes
-      let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = template.replace(
-        `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid()}"`,
-      );
-      const page = await vite.transformIndexHtml(url, template);
-      res.status(200).set({ "Content-Type": "text/html" }).end(page);
-    } catch (e) {
-      vite.ssrFixStacktrace(e as Error);
-      next(e);
-    }
-  });
-}
-
-export function serveStatic(app: Express) {
-  const distPath = path.resolve(import.meta.dirname, "public");
-
-  if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
-    );
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"))
+    })
   }
 
-  app.use(express.static(distPath));
+  return vite
+}
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
-    res.sendFile(path.resolve(distPath, "index.html"));
-  });
+export function serveStatic(app: express.Application) {
+  const distPath = path.resolve(__dirname, "../client/dist")
+
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath))
+
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api")) {
+        return next()
+      }
+      res.sendFile(path.join(distPath, "index.html"))
+    })
+  }
+}
+
+export function log(message: string, level: "info" | "error" | "warn" = "info") {
+  const timestamp = new Date().toISOString()
+  const prefix = `[${timestamp}] [${level.toUpperCase()}]`
+
+  switch (level) {
+    case "error":
+      console.error(`${prefix} ${message}`)
+      break
+    case "warn":
+      console.warn(`${prefix} ${message}`)
+      break
+    default:
+      console.log(`${prefix} ${message}`)
+  }
 }

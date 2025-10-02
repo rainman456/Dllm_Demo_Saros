@@ -1,141 +1,160 @@
-import {
-  type User,
-  type InsertUser,
-  type Position,
-  type InsertPosition,
-  type RebalancingEvent,
-  type InsertRebalancingEvent,
-  type TelegramAlert,
-  type InsertTelegramAlert,
-} from "@shared/schema";
-import { randomUUID } from "crypto";
+import fs from "fs/promises"
+import path from "path"
+import { fileURLToPath } from "url"
+import { dirname } from "path"
+import type { Position, RebalancingEvent, TelegramAlert } from "../shared/schema"
 
-export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  
-  getPositions(walletAddress: string): Promise<Position[]>;
-  getPosition(id: string): Promise<Position | undefined>;
-  createPosition(position: InsertPosition): Promise<Position>;
-  updatePosition(id: string, updates: Partial<Position>): Promise<Position | undefined>;
-  deletePosition(id: string): Promise<boolean>;
-  
-  getRebalancingEvents(limit?: number): Promise<RebalancingEvent[]>;
-  createRebalancingEvent(event: InsertRebalancingEvent): Promise<RebalancingEvent>;
-  
-  getTelegramAlerts(limit?: number): Promise<TelegramAlert[]>;
-  createTelegramAlert(alert: InsertTelegramAlert): Promise<TelegramAlert>;
-}
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private positions: Map<string, Position>;
-  private events: Map<string, RebalancingEvent>;
-  private alerts: Map<string, TelegramAlert>;
+const DATA_DIR = path.resolve(__dirname, "../data")
+const POSITIONS_FILE = path.join(DATA_DIR, "positions.json")
+const EVENTS_FILE = path.join(DATA_DIR, "events.json")
+const ALERTS_FILE = path.join(DATA_DIR, "alerts.json")
 
-  constructor() {
-    this.users = new Map();
-    this.positions = new Map();
-    this.events = new Map();
-    this.alerts = new Map();
+class Storage {
+  private positions: Map<string, Position> = new Map()
+  private events: RebalancingEvent[] = []
+  private alerts: TelegramAlert[] = []
+  private initialized = false
+
+  async initialize() {
+    if (this.initialized) return
+
+    try {
+      await fs.mkdir(DATA_DIR, { recursive: true })
+      await this.loadData()
+      this.initialized = true
+      console.log("[Storage] Initialized successfully")
+    } catch (error) {
+      console.error("[Storage] Initialization error:", error)
+      throw error
+    }
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  private async loadData() {
+    try {
+      const positionsData = await fs.readFile(POSITIONS_FILE, "utf-8")
+      const positions: Position[] = JSON.parse(positionsData)
+      positions.forEach((p) => this.positions.set(p.id, p))
+    } catch (error) {
+      console.log("[Storage] No existing positions file, starting fresh")
+    }
+
+    try {
+      const eventsData = await fs.readFile(EVENTS_FILE, "utf-8")
+      this.events = JSON.parse(eventsData)
+    } catch (error) {
+      console.log("[Storage] No existing events file, starting fresh")
+    }
+
+    try {
+      const alertsData = await fs.readFile(ALERTS_FILE, "utf-8")
+      this.alerts = JSON.parse(alertsData)
+    } catch (error) {
+      console.log("[Storage] No existing alerts file, starting fresh")
+    }
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  private async savePositions() {
+    const positions = Array.from(this.positions.values())
+    await fs.writeFile(POSITIONS_FILE, JSON.stringify(positions, null, 2))
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  private async saveEvents() {
+    await fs.writeFile(EVENTS_FILE, JSON.stringify(this.events, null, 2))
   }
 
-  async getPositions(walletAddress: string): Promise<Position[]> {
-    return Array.from(this.positions.values()).filter(
-      (pos) => pos.walletAddress === walletAddress
-    );
+  private async saveAlerts() {
+    await fs.writeFile(ALERTS_FILE, JSON.stringify(this.alerts, null, 2))
+  }
+
+  // Position methods
+  async getPositions(): Promise<Position[]> {
+    return Array.from(this.positions.values())
   }
 
   async getPosition(id: string): Promise<Position | undefined> {
-    return this.positions.get(id);
+    return this.positions.get(id)
   }
 
-  async createPosition(insertPosition: InsertPosition): Promise<Position> {
-    const id = randomUUID();
-    const position: Position = {
-      ...insertPosition,
-      id,
-      status: insertPosition.status || "in-range",
-      binDistribution: insertPosition.binDistribution || null,
-      createdAt: new Date(),
-    };
-    this.positions.set(id, position);
-    return position;
+  async savePosition(position: Position): Promise<void> {
+    this.positions.set(position.id, position)
+    await this.savePositions()
   }
 
   async updatePosition(id: string, updates: Partial<Position>): Promise<Position | undefined> {
-    const position = this.positions.get(id);
-    if (!position) return undefined;
+    const position = this.positions.get(id)
+    if (!position) return undefined
 
-    const updated = { ...position, ...updates };
-    this.positions.set(id, updated);
-    return updated;
+    const updated = { ...position, ...updates, updatedAt: new Date().toISOString() }
+    this.positions.set(id, updated)
+    await this.savePositions()
+    return updated
   }
 
   async deletePosition(id: string): Promise<boolean> {
-    return this.positions.delete(id);
+    const deleted = this.positions.delete(id)
+    if (deleted) {
+      await this.savePositions()
+    }
+    return deleted
   }
 
-  async getRebalancingEvents(limit: number = 50): Promise<RebalancingEvent[]> {
-    const events = Array.from(this.events.values());
-    events.sort((a, b) => {
-      const timeA = a.timestamp?.getTime() || 0;
-      const timeB = b.timestamp?.getTime() || 0;
-      return timeB - timeA;
-    });
-    return events.slice(0, limit);
+  // Event methods
+  async getEvents(limit?: number): Promise<RebalancingEvent[]> {
+    const sorted = [...this.events].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return limit ? sorted.slice(0, limit) : sorted
   }
 
-  async createRebalancingEvent(insertEvent: InsertRebalancingEvent): Promise<RebalancingEvent> {
-    const id = randomUUID();
-    const event: RebalancingEvent = {
-      ...insertEvent,
-      id,
-      timestamp: new Date(),
-    };
-    this.events.set(id, event);
-    return event;
+  async addEvent(event: RebalancingEvent): Promise<void> {
+    this.events.push(event)
+    // Keep only last 1000 events
+    if (this.events.length > 1000) {
+      this.events = this.events.slice(-1000)
+    }
+    await this.saveEvents()
   }
 
-  async getTelegramAlerts(limit: number = 20): Promise<TelegramAlert[]> {
-    const alerts = Array.from(this.alerts.values());
-    alerts.sort((a, b) => {
-      const timeA = a.time?.getTime() || 0;
-      const timeB = b.time?.getTime() || 0;
-      return timeB - timeA;
-    });
-    return alerts.slice(0, limit);
+  async createRebalancingEvent(event: Omit<RebalancingEvent, "id" | "timestamp">): Promise<void> {
+    const newEvent: RebalancingEvent = {
+      id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: new Date().toISOString(),
+      ...event,
+    }
+    await this.addEvent(newEvent)
   }
 
-  async createTelegramAlert(insertAlert: InsertTelegramAlert): Promise<TelegramAlert> {
-    const id = randomUUID();
-    const alert: TelegramAlert = {
-      ...insertAlert,
-      id,
-      sent: insertAlert.sent || "false",
-      time: new Date(),
-    };
-    this.alerts.set(id, alert);
-    return alert;
+  async getRebalancingEvents(limit?: number): Promise<RebalancingEvent[]> {
+    return this.getEvents(limit)
+  }
+
+  // Alert methods
+  async getAlerts(limit?: number): Promise<TelegramAlert[]> {
+    const sorted = [...this.alerts].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return limit ? sorted.slice(0, limit) : sorted
+  }
+
+  async addAlert(alert: TelegramAlert): Promise<void> {
+    this.alerts.push(alert)
+    // Keep only last 500 alerts
+    if (this.alerts.length > 500) {
+      this.alerts = this.alerts.slice(-500)
+    }
+    await this.saveAlerts()
+  }
+
+  async markAlertSent(id: string): Promise<void> {
+    const alert = this.alerts.find((a) => a.id === id)
+    if (alert) {
+      alert.sent = true
+      await this.saveAlerts()
+    }
+  }
+
+  async getTelegramAlerts(limit?: number): Promise<TelegramAlert[]> {
+    return this.getAlerts(limit)
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new Storage()
