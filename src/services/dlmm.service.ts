@@ -1,6 +1,7 @@
+// src/services/dlmm.service.ts
 import { type Connection, PublicKey } from "@solana/web3.js"
 import { LiquidityBookServices, MODE } from "@saros-finance/dlmm-sdk"
-import type { Position, PortfolioStats, PoolState } from "@/src/types"
+import type { Position, PortfolioStats, PoolState, SDKTokenInfo, PoolMetadata as LocalPoolMetadata } from "@/src/types"
 import BN from "bn.js"
 
 export class DLMMService {
@@ -31,23 +32,26 @@ export class DLMMService {
       // Check each pool for user positions
       for (const poolAddress of poolAddresses) {
         try {
-          // Fetch pool metadata
-          const poolMetadata = await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+          // Use mapped pool metadata (LocalPoolMetadata) which contains binStep/activeId
+          const poolMetadata = await this.getPoolMetadata(poolAddress)
 
           if (!poolMetadata) continue
 
-          // Get user positions for this pool
-          const userPositions = await this.liquidityBookServices.getUserPositions(
-            new PublicKey(poolAddress),
-            userPubkey,
-          )
+          // Get user positions for this pool using SDK signature { pair, payer }
+          const userPositionsRaw = await this.liquidityBookServices.getUserPositions({
+            pair: new PublicKey(poolAddress),
+            payer: userPubkey,
+          })
+
+          // Normalize
+          const userPositions = Array.isArray(userPositionsRaw) ? userPositionsRaw : (userPositionsRaw ?? [])
 
           for (const position of userPositions) {
-            // Calculate position metrics
+            // Calculate position metrics (uses mapped fields)
             const isInRange =
               position.lowerBinId <= poolMetadata.activeId && position.upperBinId >= poolMetadata.activeId
 
-            // Get token amounts
+            // Get token amounts (use the mapped token decimals)
             const liquidityX = this.bnToNumber(new BN(position.totalXAmount), poolMetadata.tokenX.decimals)
             const liquidityY = this.bnToNumber(new BN(position.totalYAmount), poolMetadata.tokenY.decimals)
 
@@ -107,11 +111,41 @@ export class DLMMService {
   }
 
   /**
-   * Get pool metadata
+   * Get pool metadata (mapped to local shape)
    */
-  async getPoolMetadata(poolAddress: string) {
+  async getPoolMetadata(poolAddress: string): Promise<LocalPoolMetadata | null> {
     try {
-      return await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+      // treat SDK return as any so we can defensively map fields
+      const raw: any = await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+
+      if (!raw) return null
+
+      // helper mapper for token info
+      const mapToken = (t: any): SDKTokenInfo => {
+        return {
+          mint: t?.mint ?? t?.address ?? t?.tokenMint ?? "",
+          decimals: Number(t?.decimals ?? t?.decimalsToken ?? 0),
+          symbol: t?.symbol ?? t?.ticker ?? undefined,
+        }
+      }
+
+      // Normalize common property variations from SDK (be defensive)
+      const activeId = raw.activeId ?? raw.active_id ?? raw.active ?? 0
+      const binStep = raw.binStep ?? raw.bin_step ?? raw.bin_step_value ?? raw.bin_step_bps ?? 0
+      const protocolFeeRate = raw.protocolFeeRate ?? raw.protocol_fee_rate ?? raw.protocolFee ?? 0
+
+      const tokenXRaw = raw.tokenX ?? raw.token_x ?? raw.baseToken ?? raw.tokenBase ?? raw.tokenBaseInfo ?? {}
+      const tokenYRaw = raw.tokenY ?? raw.token_y ?? raw.quoteToken ?? raw.tokenQuote ?? raw.tokenQuoteInfo ?? {}
+
+      const mapped: LocalPoolMetadata = {
+        activeId,
+        binStep,
+        tokenX: mapToken(tokenXRaw),
+        tokenY: mapToken(tokenYRaw),
+        protocolFeeRate,
+      }
+
+      return mapped
     } catch (error) {
       console.error("[v0] Error fetching pool metadata:", error)
       return null
@@ -213,7 +247,7 @@ export class DLMMService {
    */
   async getPoolState(poolAddress: string): Promise<PoolState> {
     try {
-      const metadata = await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+      const metadata = await this.getPoolMetadata(poolAddress)
 
       if (!metadata) {
         throw new Error("Pool metadata not found")
@@ -240,7 +274,7 @@ export class DLMMService {
    */
   async getSwapQuote(poolAddress: string, amountIn: number, swapForY: boolean, slippage = 0.5) {
     try {
-      const metadata = await this.liquidityBookServices.fetchPoolMetadata(poolAddress)
+      const metadata = await this.getPoolMetadata(poolAddress)
 
       if (!metadata) {
         throw new Error("Pool not found")

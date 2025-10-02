@@ -4,6 +4,8 @@ import { getWallet, getWalletPublicKey } from "./utils/wallet"
 import { DLMMService } from "./services/dlmm.service"
 import { StakeService } from "./services/stake.service"
 import { VolatilityService } from "./services/volatility.service"
+import { Keypair, Transaction } from "@solana/web3.js"
+import type { Wallet as AnchorWallet } from "@coral-xyz/anchor"
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ""
 const MONITORED_POOLS = process.env.MONITORED_POOLS?.split(",") || []
@@ -20,10 +22,39 @@ class SarosTelegramBot {
     this.bot = new Telegraf(BOT_TOKEN)
     const connection = getConnection()
     const wallet = getWallet()
+    const keypair: Keypair = getWallet()
 
+    function isAnchorWallet(w: any): w is AnchorWallet {
+  return w && (w as any).payer && typeof (w as any).signTransaction === "function"
+}
+
+let anchorWallet: AnchorWallet
+
+if (isAnchorWallet(keypair)) {
+  // Already a wallet-like object (unlikely for your current getWallet), just reuse
+  anchorWallet = keypair as unknown as AnchorWallet
+} else {
+  // Wrap the Keypair into a minimal Anchor-compatible Wallet object
+  anchorWallet = {
+    payer: keypair,
+    async signTransaction(tx: Transaction) {
+      // partialSign so other signatures can be added later if needed
+      tx.partialSign(keypair)
+      return tx
+    },
+    async signAllTransactions(txs: Transaction[]) {
+      txs.forEach((t) => t.partialSign(keypair))
+      return txs
+    },
+  } as unknown as AnchorWallet
+}
+
+    // this.dlmmService = new DLMMService(connection)
+    // this.volatilityService = new VolatilityService(connection)
+    // this.stakeService = new StakeService(connection, wallet)
     this.dlmmService = new DLMMService(connection)
-    this.volatilityService = new VolatilityService(connection)
-    this.stakeService = new StakeService(connection, wallet)
+this.volatilityService = new VolatilityService(connection)
+this.stakeService = new StakeService(connection, anchorWallet)
 
     this.setupCommands()
   }

@@ -89,3 +89,18 @@ export interface PortfolioStats {
   averageAPY?: number; // Alias for avgApy
   impermanentLoss?: number; // Add if needed for calculations
 }
+
+
+export interface SDKTokenInfo {
+  mint: string
+  decimals: number
+  symbol?: string
+}
+
+export interface PoolMetadata {
+  activeId: number            // active bin id
+  binStep: number            // bin step (basis points / per-bin increment)
+  tokenX: SDKTokenInfo
+  tokenY: SDKTokenInfo
+  protocolFeeRate?: number
+}

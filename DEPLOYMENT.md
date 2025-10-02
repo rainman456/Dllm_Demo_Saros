@@ -4,7 +4,7 @@ Complete guide for deploying the Saros DLMM Rebalancer to production.
 
 ## Architecture Overview
 
-\`\`\`
+```
 ┌─────────────────┐
 │  Vercel         │
 │  (Dashboard)    │
@@ -23,7 +23,7 @@ Complete guide for deploying the Saros DLMM Rebalancer to production.
 │  Solana         │
 │  (Devnet/Main)  │
 └─────────────────┘
-\`\`\`
+```
 
 ## Prerequisites
 
@@ -38,28 +38,28 @@ Complete guide for deploying the Saros DLMM Rebalancer to production.
 
 1. **Install Heroku CLI**
 
-\`\`\`bash
+```bash
 npm install -g heroku
 heroku login
-\`\`\`
+```
 
 2. **Create Heroku App**
 
-\`\`\`bash
+```bash
 heroku create saros-rebalancer
-\`\`\`
+```
 
 3. **Add Procfile**
 
 Create `Procfile`:
-\`\`\`
+```
 worker: npm run rebalancer
 bot: npm run bot
-\`\`\`
+```
 
 4. **Set Environment Variables**
 
-\`\`\`bash
+```bash
 heroku config:set SOLANA_RPC_URL=https://your-rpc-endpoint.com
 heroku config:set WALLET_PRIVATE_KEY=your_private_key
 heroku config:set TELEGRAM_BOT_TOKEN=your_bot_token
@@ -70,44 +70,44 @@ heroku config:set VOLATILITY_THRESHOLD=0.05
 heroku config:set OUT_OF_RANGE_THRESHOLD=0.1
 heroku config:set ENABLE_STOP_LOSS=true
 heroku config:set STOP_LOSS_PERCENTAGE=0.15
-\`\`\`
+```
 
 5. **Deploy**
 
-\`\`\`bash
+```bash
 git push heroku main
-\`\`\`
+```
 
 6. **Scale Workers**
 
-\`\`\`bash
+```bash
 # Start rebalancer
 heroku ps:scale worker=1
 
 # Start bot
 heroku ps:scale bot=1
-\`\`\`
+```
 
 7. **Monitor Logs**
 
-\`\`\`bash
+```bash
 heroku logs --tail
-\`\`\`
+```
 
 ### Option B: Railway
 
 1. **Install Railway CLI**
 
-\`\`\`bash
+```bash
 npm install -g @railway/cli
 railway login
-\`\`\`
+```
 
 2. **Initialize Project**
 
-\`\`\`bash
+```bash
 railway init
-\`\`\`
+```
 
 3. **Set Environment Variables**
 
@@ -115,15 +115,15 @@ Use Railway dashboard to set all environment variables.
 
 4. **Deploy**
 
-\`\`\`bash
+```bash
 railway up
-\`\`\`
+```
 
 ### Option C: Docker (Self-Hosted)
 
 1. **Create Dockerfile**
 
-\`\`\`dockerfile
+```dockerfile
 FROM node:18-alpine
 
 WORKDIR /app
@@ -135,23 +135,23 @@ COPY . .
 RUN npm run build
 
 CMD ["npm", "run", "rebalancer"]
-\`\`\`
+```
 
 2. **Build Image**
 
-\`\`\`bash
+```bash
 docker build -t saros-rebalancer .
-\`\`\`
+```
 
 3. **Run Container**
 
-\`\`\`bash
+```bash
 docker run -d \
   --name saros-rebalancer \
   --env-file .env \
   --restart unless-stopped \
   saros-rebalancer
-\`\`\`
+```
 
 ## Part 2: Deploy Dashboard
 
@@ -159,15 +159,15 @@ docker run -d \
 
 1. **Install Vercel CLI**
 
-\`\`\`bash
+```bash
 npm install -g vercel
 vercel login
-\`\`\`
+```
 
 2. **Configure Project**
 
 Create `vercel.json`:
-\`\`\`json
+```json
 {
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
@@ -175,13 +175,13 @@ Create `vercel.json`:
   "framework": "nextjs",
   "outputDirectory": ".next"
 }
-\`\`\`
+```
 
 3. **Deploy**
 
-\`\`\`bash
+```bash
 vercel --prod
-\`\`\`
+```
 
 4. **Set Environment Variables**
 
@@ -191,9 +191,9 @@ In Vercel dashboard:
 
 5. **Custom Domain (Optional)**
 
-\`\`\`bash
+```bash
 vercel domains add yourdomain.com
-\`\`\`
+```
 
 ## Part 3: Production Checklist
 
@@ -244,17 +244,17 @@ vercel domains add yourdomain.com
 
 2. **Update Configuration**
 
-\`\`\`env
+```env
 SOLANA_RPC_URL=https://mainnet.rpc.endpoint.com
 SOLANA_NETWORK=mainnet-beta
 MONITORED_POOLS=mainnet_pool_addresses
-\`\`\`
+```
 
 3. **Create Mainnet Wallet**
 
-\`\`\`bash
+```bash
 solana-keygen new --outfile ~/.config/solana/mainnet.json
-\`\`\`
+```
 
 4. **Fund Wallet**
    - Transfer SOL for gas fees
@@ -303,13 +303,13 @@ solana-keygen new --outfile ~/.config/solana/mainnet.json
 
 ### Rebalancer Not Running
 
-\`\`\`bash
+```bash
 # Check Heroku logs
 heroku logs --tail --app saros-rebalancer
 
 # Restart worker
 heroku ps:restart worker
-\`\`\`
+```
 
 ### High Gas Costs
 
@@ -325,13 +325,13 @@ heroku ps:restart worker
 
 ### Dashboard Not Loading
 
-\`\`\`bash
+```bash
 # Check Vercel logs
 vercel logs
 
 # Redeploy
 vercel --prod --force
-\`\`\`
+```
 
 ## Cost Estimates
 
@@ -360,19 +360,19 @@ vercel --prod --force
 If issues occur:
 
 1. **Stop Services**
-\`\`\`bash
+```bash
 heroku ps:scale worker=0 bot=0
-\`\`\`
+```
 
 2. **Rollback Deployment**
-\`\`\`bash
+```bash
 heroku rollback
-\`\`\`
+```
 
 3. **Investigate Logs**
-\`\`\`bash
+```bash
 heroku logs --tail
-\`\`\`
+```
 
 4. **Fix Issues**
 5. **Redeploy**
